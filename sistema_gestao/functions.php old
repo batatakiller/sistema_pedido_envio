@@ -1,0 +1,40 @@
+<?php
+// functions.php
+require 'config.php';
+
+// Função genérica para CURL (GET/POST/PATCH)
+function request($url, $method = 'GET', $data = null, $headers = []) {
+    $ch = curl_init($url);
+    curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
+    curl_setopt($ch, CURLOPT_SSL_VERIFYPEER, false);
+    
+    if ($method !== 'GET') {
+        curl_setopt($ch, CURLOPT_CUSTOMREQUEST, $method);
+        if ($data) curl_setopt($ch, CURLOPT_POSTFIELDS, is_array($data) ? json_encode($data) : $data);
+    }
+
+    // Headers Padrão (Supabase) + Extras
+    $defaultHeaders = [
+        "apikey: " . SB_KEY,
+        "Authorization: Bearer " . SB_KEY,
+        "Content-Type: application/json",
+        "Prefer: return=minimal"
+    ];
+    
+    curl_setopt($ch, CURLOPT_HTTPHEADER, array_merge($defaultHeaders, $headers));
+    
+    $result = curl_exec($ch);
+    curl_close($ch);
+    return json_decode($result, true);
+}
+
+// Limpa telefone para formato numérico
+function limparTelefone($fone) {
+    $num = preg_replace('/[^0-9]/', '', $fone);
+    // Se não tiver DDI (55) e tiver DDD+Numero (10 ou 11 digitos), adiciona
+    if (strlen($num) >= 10 && strlen($num) <= 11) {
+        $num = '55' . $num;
+    }
+    return $num;
+}
+?>

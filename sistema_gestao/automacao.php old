@@ -1,0 +1,78 @@
+<?php
+// automacao.php
+require 'functions.php';
+
+// URLs locais (para chamar os módulos internos)
+$baseUrl = "http://" . $_SERVER['HTTP_HOST'] . dirname($_SERVER['PHP_SELF']);
+
+// 1. Busca pedidos PENDENTES no Supabase
+// Regra: Não enviado no Zap E Não enviado na Transportadora
+$pedidos = request(SB_URL . "/rest/v1/amazon_orders_raw?select=*&enviado_whatsapp=eq.false&limit=5");
+
+$logs = [];
+
+if (empty($pedidos)) {
+    echo json_encode(['status' => 'Concluido', 'msg' => 'Nenhum pedido pendente.']);
+    exit;
+}
+
+foreach ($pedidos as $p) {
+    $log = ['pedido' => $p['order-id'], 'cliente' => $p['buyer-name']];
+    
+    $telefone = limparTelefone($p['buyer-phone-number']);
+    $cpf = preg_replace('/[^0-9]/', '', $p['cpf']);
+    
+    // FASE 1: ENRIQUECIMENTO (Se telefone for curto/invalido)
+    if (strlen($telefone) < 10 && !empty($cpf)) {
+        $log['acao_busca'] = 'Telefone inválido, buscando CPF...';
+        
+        // Chama API interna de busca
+        $jsonBusca = file_get_contents($baseUrl . "/api/consultar_cpf.php?cpf=" . $cpf);
+        $dadosBusca = json_decode($jsonBusca, true);
+        
+        if ($dadosBusca['success']) {
+            // Lógica para extrair telefone da resposta da API externa
+            // ADAPTE AQUI CONFORME O RETORNO DA WORKCONSULTORIA
+            // Exemplo: $novoFone = limparTelefone($dadosBusca['data']['telefones'][0] ?? '');
+            
+            // Se achou, salva no banco
+            /* if ($novoFone) {
+                $telefone = $novoFone;
+                request(SB_URL . "/rest/v1/amazon_orders_raw?order-id=eq." . $p['order-id'], 'PATCH', ['buyer-phone-number' => $telefone]);
+                $log['resultado_busca'] = 'Telefone atualizado!';
+            } */
+        }
+    }
+
+    // FASE 2: ENVIO (Se tiver telefone válido agora)
+    if (strlen($telefone) >= 12) { // 55 + DDD + 9digitos = 12 ou 13
+        $msg = "Olá {$p['buyer-name']}, recebemos seu pedido {$p['order-id']}. Confirme o recebimento respondendo SIM.";
+        
+        // Envia para o módulo Sender
+        $payload = [
+            'tipo' => 'whatsapp',
+            'destino' => $telefone,
+            'mensagem' => $msg
+        ];
+        
+        $opts = ['http' => ['method' => 'POST', 'header' => 'Content-Type: application/json', 'content' => json_encode($payload)]];
+        $context = stream_context_create($opts);
+        $resEnvio = file_get_contents($baseUrl . "/api/enviar.php", false, $context);
+        $dadosEnvio = json_decode($resEnvio, true);
+        
+        if ($dadosEnvio['success']) {
+            // Marca como enviado no banco
+            request(SB_URL . "/rest/v1/amazon_orders_raw?order-id=eq." . $p['order-id'], 'PATCH', ['enviado_whatsapp' => true]);
+            $log['status_envio'] = 'Sucesso';
+        } else {
+            $log['status_envio'] = 'Falha API Zap';
+        }
+    } else {
+        $log['status_envio'] = 'Ignorado (Sem telefone)';
+    }
+    
+    $logs[] = $log;
+}
+
+echo json_encode(['status' => 'Processando', 'detalhes' => $logs]);
+?>

@@ -1,85 +1,116 @@
 <?php
 // ====================================================================
-// ARQUIVO: update_process.php (ATUALIZADO)
+// ARQUIVO: supa/update_process.php
+// VERSÃO: Lógica de Contador Personalizada (Incrementa só na Confirmação)
 // ====================================================================
 
-// Desativa erros HTML para não quebrar o JSON
 ini_set('display_errors', 0);
 error_reporting(E_ALL);
+header('Content-Type: application/json; charset=utf-8');
 
-header('Content-Type: application/json');
+// 1. Config
+if (file_exists('../config.php')) {
+    require_once '../config.php';
+} else {
+    echo json_encode(['success' => false, 'message' => 'Erro: config.php ausente.']);
+    exit;
+}
 
-try {
-    // Configurações
-    $supabaseUrl = 'https://qoobmxjzcjtkpezajbbv.supabase.co'; 
-    $supabaseAnonKey = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InFvb2JteGp6Y2p0a3BlemFqYmJ2Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3NjMwNDI3OTgsImV4cCI6MjA3ODYxODc5OH0.oGauqAKx1ZaMUgvYrQgvepE6XVXoKEIgbVhfWIKpgY8'; 
+if (!defined('SB_URL') || !defined('SB_KEY')) {
+    echo json_encode(['success' => false, 'message' => 'Chaves do Banco ausentes.']);
+    exit;
+}
 
-    $input = json_decode(file_get_contents('php://input'), true);
-    if (!$input) throw new Exception('Payload inválido.');
+$input = json_decode(file_get_contents('php://input'), true);
+$orderId = $input['order_id'] ?? '';
+$column = $input['column'] ?? ''; 
+$value = $input['value']; 
 
-    $orderId = $input['order_id'] ?? '';
-    $column = $input['column'] ?? ''; 
-    $value = $input['value']; 
-    $usedKeys = $input['used_keys'] ?? [];
+// Flags de controle
+$incrementCounter = $input['increment_counter'] ?? false;
+$noIncrement = $input['no_increment'] ?? false;
+
+if (empty($orderId) || empty($column)) {
+    echo json_encode(['success' => false, 'message' => 'Dados incompletos.']);
+    exit;
+}
+
+// 2. Lógica de Incremento
+// Regra: Incrementa se o front pedir (increment_counter) OU se for um envio padrão, 
+// DESDE QUE não tenha a flag de bloqueio (no_increment).
+$isEnvioColumn = ($column === 'enviado_whatsapp' || $column === 'enviado_transportadora');
+$shouldIncrement = ($incrementCounter || ($isEnvioColumn && $value === true)) && !$noIncrement;
+
+$currentCount = 0;
+$data = [];
+
+// 3. Busca contador atual (se for incrementar)
+if ($shouldIncrement) {
+    $chGet = curl_init(SB_URL . "/rest/v1/amazon_orders_raw?order-id=eq." . urlencode($orderId) . "&select=whatsapp_sent_count");
+    curl_setopt($chGet, CURLOPT_RETURNTRANSFER, true);
+    curl_setopt($chGet, CURLOPT_HTTPHEADER, ["apikey: " . SB_KEY, "Authorization: Bearer " . SB_KEY]);
+    curl_setopt($chGet, CURLOPT_SSL_VERIFYPEER, false);
     
-    // NOVO: Recebe o telefone corrigido (opcional)
-    $newPhone = $input['new_phone'] ?? null;
-
-    if (empty($orderId) || empty($column)) {
-        throw new Exception('Dados incompletos.');
-    }
-
-    function supabaseRequest($url, $method, $data, $key) {
-        $ch = curl_init();
-        curl_setopt($ch, CURLOPT_URL, $url);
-        curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
-        curl_setopt($ch, CURLOPT_CUSTOMREQUEST, $method);
-        curl_setopt($ch, CURLOPT_POSTFIELDS, json_encode($data));
-        curl_setopt($ch, CURLOPT_HTTPHEADER, [
-            "apikey: {$key}", "Authorization: Bearer {$key}", "Content-Type: application/json", "Prefer: return=minimal"
-        ]);
-        $res = curl_exec($ch);
-        $code = curl_getinfo($ch, CURLINFO_HTTP_CODE);
-        curl_close($ch);
-        return ['code' => $code, 'response' => $res];
-    }
-
-    // 1. Preparar dados para atualização do pedido
-    $updateData = [$column => $value];
+    $resGet = curl_exec($chGet);
+    curl_close($chGet);
     
-    // SE um novo telefone foi enviado, adiciona à lista de atualização
-    if (!empty($newPhone)) {
-        // Remove caracteres não numéricos para salvar limpo no banco
-        $cleanPhoneDB = preg_replace('/[^0-9]/', '', $newPhone);
-        $updateData['buyer-phone-number'] = $cleanPhoneDB;
+    $jsonGet = json_decode($resGet, true);
+    if (!empty($jsonGet) && isset($jsonGet[0])) {
+        $currentCount = (int)($jsonGet[0]['whatsapp_sent_count'] ?? 0);
     }
+    
+    $data['whatsapp_sent_count'] = $currentCount + 1;
+}
 
-    // Atualizar Pedido
-    $urlOrder = "{$supabaseUrl}/rest/v1/amazon_orders_raw?order-id=eq." . urlencode($orderId);
-    $resOrder = supabaseRequest($urlOrder, 'PATCH', $updateData, $supabaseAnonKey);
+// 4. Dados a atualizar
+if ($column !== null && $value !== null) {
+    $data[$column] = $value;
+}
 
-    if ($resOrder['code'] >= 300) {
-        throw new Exception("Erro ao atualizar pedido: " . $resOrder['response']);
-    }
+if (!empty($input['new_phone'])) {
+    $data['buyer-phone-number'] = preg_replace('/[^0-9]/', '', $input['new_phone']);
+}
 
-    // 2. Processar Chaves (se necessário)
-    if (!empty($usedKeys) && $value === true && ($column === 'enviado_whatsapp' || $column === 'enviado_transportadora')) {
-        foreach ($usedKeys as $keyRaw) {
-            $cleanKey = trim($keyRaw);
-            if(empty($cleanKey)) continue;
+if (empty($data)) {
+    echo json_encode(['success' => true, 'message' => 'Nada a atualizar.']);
+    exit;
+}
 
-            $urlRpc = "{$supabaseUrl}/rest/v1/rpc/mark_key_used";
-            $dataRpc = [
-                'p_license_key' => $cleanKey,
-                'p_order_id' => (string)$orderId
-            ];
-            supabaseRequest($urlRpc, 'POST', $dataRpc, $supabaseAnonKey);
+// 5. Envia Patch
+$url = SB_URL . "/rest/v1/amazon_orders_raw?order-id=eq." . urlencode($orderId);
+$ch = curl_init();
+curl_setopt($ch, CURLOPT_URL, $url);
+curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
+curl_setopt($ch, CURLOPT_CUSTOMREQUEST, 'PATCH');
+curl_setopt($ch, CURLOPT_POSTFIELDS, json_encode($data));
+curl_setopt($ch, CURLOPT_HTTPHEADER, [
+    "apikey: " . SB_KEY,
+    "Authorization: Bearer " . SB_KEY,
+    "Content-Type: application/json",
+    "Prefer: return=minimal"
+]);
+curl_setopt($ch, CURLOPT_SSL_VERIFYPEER, false);
+
+$res = curl_exec($ch);
+$http = curl_getinfo($ch, CURLINFO_HTTP_CODE);
+curl_close($ch);
+
+if ($http >= 200 && $http < 300) {
+    // Marca chaves como usadas (apenas se for entrega de chaves real)
+    if ($column === 'enviado_whatsapp' && $value === true && !$noIncrement && !empty($input['used_keys'])) {
+        foreach ($input['used_keys'] as $k) {
+            $ch2 = curl_init(SB_URL . "/rest/v1/rpc/mark_key_used");
+            curl_setopt($ch2, CURLOPT_RETURNTRANSFER, true);
+            curl_setopt($ch2, CURLOPT_POST, true);
+            curl_setopt($ch2, CURLOPT_POSTFIELDS, json_encode(['p_license_key' => $k, 'p_order_id' => $orderId]));
+            curl_setopt($ch2, CURLOPT_HTTPHEADER, ["apikey: ".SB_KEY, "Authorization: Bearer ".SB_KEY, "Content-Type: application/json"]);
+            curl_setopt($ch2, CURLOPT_SSL_VERIFYPEER, false);
+            curl_exec($ch2);
+            curl_close($ch2);
         }
     }
-
     echo json_encode(['success' => true]);
-
-} catch (Exception $e) {
-    echo json_encode(['success' => false, 'message' => $e->getMessage()]);
+} else {
+    echo json_encode(['success' => false, 'message' => "Erro Supabase ($http)"]);
 }
 ?>

@@ -1,8 +1,8 @@
 <?php
 // sender/backend.php
-// CORREÇÃO: Codificação UTF-8 Forçada para corrigir acentos (Cl√≥vis -> Clóvis)
+// AGORA USA O CONFIG.PHP
 
-header('Content-Type: application/json; charset=utf-8'); // Header explícito
+header('Content-Type: application/json');
 
 // Carrega config
 if (file_exists('../config.php')) {
@@ -45,49 +45,39 @@ try {
     // === WHATSAPP ===
     if ($tipo === 'celular') {
         
-        // IA (Opcional) - Ajustada para gemini-2.5-flash-lite conforme seu teste
+        // IA (Opcional)
         if (defined('GEMINI_KEY') && !empty(GEMINI_KEY)) {
              $urlIA = 'https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-lite:generateContent?key=' . GEMINI_KEY;
-             
-             // Prompt otimizado
-             $prompt = "Atue como suporte. Reescreva esta mensagem para WhatsApp de forma cordial e direta, mantendo os dados ($pedido, $produto): \"$msgFinal\". Retorne APENAS o texto.";
-             
+             $prompt = "Reescreva para WhatsApp (seja profissional e breve): \"$msgFinal\"";
              $dataIA = ["contents" => [["parts" => [["text" => $prompt]]]]];
              
              $ch = curl_init($urlIA);
              curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
              curl_setopt($ch, CURLOPT_POST, true);
-             // JSON_UNESCAPED_UNICODE evita problemas com acentos na IA
-             curl_setopt($ch, CURLOPT_POSTFIELDS, json_encode($dataIA, JSON_UNESCAPED_UNICODE));
-             curl_setopt($ch, CURLOPT_HTTPHEADER, ['Content-Type: application/json; charset=utf-8']);
+             curl_setopt($ch, CURLOPT_POSTFIELDS, json_encode($dataIA));
+             curl_setopt($ch, CURLOPT_HTTPHEADER, ['Content-Type: application/json']);
              curl_setopt($ch, CURLOPT_SSL_VERIFYPEER, false);
-             curl_setopt($ch, CURLOPT_TIMEOUT, 10);
+             curl_setopt($ch, CURLOPT_TIMEOUT, 8);
              
              $resIA = curl_exec($ch);
              curl_close($ch);
              
              $jsonIA = json_decode($resIA, true);
              if (isset($jsonIA['candidates'][0]['content']['parts'][0]['text'])) {
-                 $textoIA = trim($jsonIA['candidates'][0]['content']['parts'][0]['text']);
-                 // Remove aspas que a IA as vezes coloca
-                 $msgFinal = trim($textoIA, '"\'');
+                 $msgFinal = trim($jsonIA['candidates'][0]['content']['parts'][0]['text']);
                  $response['ai_used'] = true;
              }
         }
 
-        // ENVIO UAZAPI (COM CORREÇÃO DE ENCODING)
+        // ENVIO UAZAPI (Token do Config)
         $ch = curl_init();
         curl_setopt_array($ch, [
             CURLOPT_URL => UAZAPI_URL,
             CURLOPT_RETURNTRANSFER => true,
             CURLOPT_POST => true,
-            // JSON_UNESCAPED_UNICODE é vital aqui para o nome sair certo
-            CURLOPT_POSTFIELDS => json_encode(['number' => $contato, 'text' => $msgFinal], JSON_UNESCAPED_UNICODE),
-            CURLOPT_HTTPHEADER => [
-                "Content-Type: application/json; charset=utf-8", // Header explícito para a API
-                "token: " . UAZAPI_TOKEN
-            ],
-            CURLOPT_SSL_VERIFYPEER => false,
+            CURLOPT_POSTFIELDS => json_encode(['number' => $contato, 'text' => $msgFinal]),
+            CURLOPT_HTTPHEADER => ["Content-Type: application/json", "token: " . UAZAPI_TOKEN],
+            CURLOPT_SSL_VERIFYPEER, false,
             CURLOPT_TIMEOUT => 15
         ]);
         $res = curl_exec($ch);
@@ -98,7 +88,7 @@ try {
             $response['success'] = true;
             $response['message'] = "WhatsApp enviado";
         } else {
-            throw new Exception("Erro Uazapi ($http): $res");
+            throw new Exception("Erro Uazapi: $res");
         }
 
     // === EMAIL ===
@@ -107,12 +97,11 @@ try {
         $mail->isSMTP();
         $mail->Host = 'smtp.gmail.com';
         $mail->SMTPAuth = true;
-        $mail->Username = MAIL_USER;
-        $mail->Password = MAIL_PASS;
+        $mail->Username = MAIL_USER; // Do config
+        $mail->Password = MAIL_PASS; // Do config
         $mail->SMTPSecure = PHPMailer::ENCRYPTION_STARTTLS;
         $mail->Port = 587;
-        $mail->CharSet = 'UTF-8'; // Garante UTF-8 no email
-        
+        $mail->CharSet = 'UTF-8';
         $mail->setFrom(MAIL_USER, 'Atendimento');
         $mail->addAddress($contato, $nome);
         $mail->isHTML(true);
@@ -130,6 +119,5 @@ try {
     $response['message'] = $e->getMessage();
 }
 
-// Retorno JSON com encoding correto
-echo json_encode($response, JSON_UNESCAPED_UNICODE);
+echo json_encode($response);
 ?>

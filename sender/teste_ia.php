@@ -1,52 +1,85 @@
 <?php
 // teste_ia.php
 
-// --- COLOQUE SUA API KEY AQUI DENTRO DAS ASPAS ---
+// --- SUA API KEY ---
 define('MINHA_KEY', 'AIzaSyBSmCi9-Qg3jI0s4jNdnFw_1wKkNu-bs6Y'); 
-// --------------------------------------------------
+// -------------------
 
-echo "<h2>Diagnóstico de Conexão com Gemini</h2>";
-
-if (MINHA_KEY === 'COLE_SUA_KEY_AQUI') {
-    die("<h3 style='color:red'>ERRO: Você esqueceu de colocar a API Key na linha 3 deste arquivo!</h3>");
-}
-
-$url = 'https://generativelanguage.googleapis.com/v1beta/models/gemma-3-12b-it:generateContent?key=' . MINHA_KEY;
-
-$data = [
-    "contents" => [[
-        "parts" => [["text" => "Responda apenas com a palavra: FUNCIONOU"]]
-    ]]
+// Lista completa solicitada
+$modelos = [
+    'gemini-2.5-flash',
+    'gemini-2.5-pro',
+    'gemini-2.0-flash-exp',
+    'gemini-2.0-flash',
+    'gemini-2.0-flash-001',
+    'gemini-2.0-flash-exp-image-generation',
+    'gemini-2.0-flash-lite-001',
+    'gemini-2.0-flash-lite',
+    'gemini-2.0-flash-lite-preview-02-05',
+    'gemini-2.0-flash-lite-preview',
+    'gemini-exp-1206',
+    'gemini-2.5-flash-preview-tts',
+    'gemini-2.5-pro-preview-tts',
+    'gemma-3-1b-it',
+    'gemma-3-4b-it',
+    'gemma-3-12b-it',
+    'gemma-3-27b-it',
+    'gemma-3n-e4b-it',
+    'gemma-3n-e2b-it',
+    'gemini-flash-latest',
+    'gemini-flash-lite-latest',
+    'gemini-pro-latest',
+    'gemini-2.5-flash-lite',
+    'gemini-2.5-flash-image-preview',
+    'gemini-2.5-flash-image',
+    'gemini-2.5-flash-preview-09-2025',
+    'gemini-2.5-flash-lite-preview-09-2025',
+    'gemini-3-pro-preview',
+    'gemini-3-pro-image-preview',
+    'nano-banana-pro-preview',
+    'gemini-robotics-er-1.5-preview',
+    'gemini-2.5-computer-use-preview-10-2025'
 ];
 
-$ch = curl_init($url);
-curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
-curl_setopt($ch, CURLOPT_POST, true);
-curl_setopt($ch, CURLOPT_POSTFIELDS, json_encode($data));
-curl_setopt($ch, CURLOPT_HTTPHEADER, ['Content-Type: application/json']);
-curl_setopt($ch, CURLOPT_SSL_VERIFYPEER, false); // Desativa verificação SSL temporariamente para teste
+echo "<h3>Relatório de Teste Gemini</h3>";
+echo "<div style='font-family: monospace; font-size: 14px;'>";
 
-$result = curl_exec($ch);
-$erroCurl = curl_error($ch);
-curl_close($ch);
+// Desativa SSL para evitar erro de certificado local
+$sslVerify = false; 
 
-if ($erroCurl) {
-    echo "<p style='color:red'><strong>ERRO DE CONEXÃO (cURL):</strong> $erroCurl</p>";
-    echo "<p>Isso geralmente é bloqueio da Hostinger.</p>";
-} else {
-    $json = json_decode($result, true);
+foreach ($modelos as $modelo) {
     
-    if (isset($json['error'])) {
-        echo "<p style='color:red'><strong>ERRO DA API GOOGLE:</strong></p>";
-        echo "<pre>" . print_r($json['error'], true) . "</pre>";
-        echo "<p>Verifique se sua API Key está ativa e se você habilitou o faturamento (se necessário).</p>";
-    } else if (isset($json['candidates'])) {
-        echo "<h3 style='color:green'>SUCESSO! A IA RESPONDEU:</h3>";
-        echo "<div style='background:#dfd; padding:10px; border:1px solid green'>" . $json['candidates'][0]['content']['parts'][0]['text'] . "</div>";
-        echo "<p>Agora copie a API KEY deste arquivo e coloque no <strong>backend.php</strong> com cuidado.</p>";
+    $url = "https://generativelanguage.googleapis.com/v1beta/models/$modelo:generateContent?key=" . MINHA_KEY;
+
+    $data = [ "contents" => [[ "parts" => [["text" => "Oi"]] ]] ];
+
+    $ch = curl_init($url);
+    curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
+    curl_setopt($ch, CURLOPT_POST, true);
+    curl_setopt($ch, CURLOPT_POSTFIELDS, json_encode($data));
+    curl_setopt($ch, CURLOPT_HTTPHEADER, ['Content-Type: application/json']);
+    curl_setopt($ch, CURLOPT_SSL_VERIFYPEER, $sslVerify);
+    curl_setopt($ch, CURLOPT_TIMEOUT, 3); // Timeout rápido de 3s
+
+    $result = curl_exec($ch);
+    $httpCode = curl_getinfo($ch, CURLINFO_HTTP_CODE);
+    curl_close($ch);
+
+    $json = json_decode($result, true);
+
+    // Verificação simples: Se HTTP 200 e tem candidatos, funcionou.
+    if ($httpCode == 200 && isset($json['candidates'])) {
+        echo "<div style='color:green; margin-bottom:4px;'>$modelo (FUNCIONOU)</div>";
     } else {
-        echo "<p style='color:orange'>Retorno desconhecido:</p>";
-        echo "<pre>" . $result . "</pre>";
+        // Opcional: Mostra erro se quiser, mas o pedido foi simples
+        // $msg = isset($json['error']['message']) ? $json['error']['message'] : "Erro $httpCode";
+        echo "<div style='color:red; margin-bottom:4px;'>$modelo (FALHOU)</div>";
     }
+
+    // Tenta forçar o navegador a mostrar linha por linha enquanto carrega
+    if(ob_get_level() > 0) { ob_flush(); }
+    flush();
 }
+
+echo "</div>";
 ?>
